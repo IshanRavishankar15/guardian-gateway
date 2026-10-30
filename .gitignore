@@ -1,0 +1,30 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# JavaScript / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Local data and generated artifacts
+postgres-data/
+redis-data/
+coverage/
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db

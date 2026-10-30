@@ -1,0 +1,13 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f4f7fb;
+  color: #172b4d;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 900px; margin: 10vh auto; padding: 2rem; }
+h1 { font-size: 2.4rem; margin-bottom: 0.4rem; }
+p { color: #526581; line-height: 1.6; }
+section { margin-top: 2rem; padding: 1.5rem; background: white; border: 1px solid #dce4ef; border-radius: 12px; }
