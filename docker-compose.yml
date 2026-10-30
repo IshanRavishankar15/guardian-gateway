@@ -34,6 +34,8 @@ services:
       APP_ENV: development
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://guardian:change-me-locally@postgres:5432/guardian_gateway}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me-admin-token}
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
