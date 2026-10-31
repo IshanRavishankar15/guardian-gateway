@@ -22,17 +22,22 @@ async def lifespan(application: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title=get_settings().app_name, version="0.1.0", lifespan=lifespan)
-app.add_middleware(PrometheusMiddleware)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[get_settings().frontend_origin],
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Admin-Token", "X-API-Key"],
-    allow_credentials=False,
-)
-app.include_router(health_router)
-app.include_router(admin_router)
-app.include_router(admin_metrics_router)
-app.include_router(metrics_router)
-app.include_router(gateway_router)
+def create_app() -> FastAPI:
+    application = FastAPI(title=get_settings().app_name, version="0.1.0", lifespan=lifespan)
+    application.add_middleware(PrometheusMiddleware)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=[get_settings().frontend_origin],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Admin-Token", "X-API-Key"],
+        allow_credentials=False,
+    )
+    application.include_router(health_router)
+    application.include_router(admin_router)
+    application.include_router(admin_metrics_router)
+    application.include_router(metrics_router)
+    application.include_router(gateway_router)
+    return application
+
+
+app = create_app()
