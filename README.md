@@ -37,7 +37,7 @@ Services are available at:
 | Prometheus metrics | http://localhost:8000/metrics |
 | Mock upstream | http://localhost:9000 |
 
-PostgreSQL and Redis are also exposed on their standard local ports. The backend applies Alembic migrations before starting. Readiness checks both PostgreSQL and Redis at `/health/ready`; `/health/live` checks only that the application process responds.
+PostgreSQL and Redis are also exposed on their standard local ports. A one-shot `migrate` service applies Alembic migrations once after PostgreSQL is healthy; gateway containers wait for it to complete before starting. Readiness checks both PostgreSQL and Redis at `/health/ready`; `/health/live` checks only that the application process responds.
 
 `.env.example` contains development-only credentials. Replace the admin token and database password before exposing any service beyond a trusted local machine. Do not commit `.env`. This MVP does not provide production-grade admin identity management, TLS termination, secret rotation, network policy, or a multi-process metrics aggregator. Restrict `/metrics` to a trusted monitoring network in any shared deployment.
 

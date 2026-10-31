@@ -33,6 +33,16 @@ services:
     ports:
       - "9000:9000"
 
+  migrate:
+    build: ./backend
+    environment:
+      APP_ENV: development
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://guardian:change-me-locally@postgres:5432/guardian_gateway}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   backend:
     build: ./backend
     environment:
@@ -44,12 +54,12 @@ services:
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me-admin-token}
       ALLOWED_UPSTREAM_HOSTS: ${ALLOWED_UPSTREAM_HOSTS:-mock-upstream,localhost,127.0.0.1}
-    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       mock-upstream:
@@ -111,10 +121,10 @@ services:
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me-admin-token}
       ALLOWED_UPSTREAM_HOSTS: ${ALLOWED_UPSTREAM_HOSTS:-mock-upstream,localhost,127.0.0.1}
-    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       mock-upstream:
