@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "postgresql+asyncpg://guardian:change-me-locally@localhost:5432/guardian_gateway"
     redis_url: str = "redis://localhost:6379/0"
+    redis_socket_timeout_seconds: float = 1.0
+    redis_connect_timeout_seconds: float = 1.0
     admin_token: str = "change-me-admin-token"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

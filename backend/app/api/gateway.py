@@ -3,12 +3,14 @@ from urllib.parse import quote, unquote
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_session
 from app.db.models import Route
 from app.services.auth import authenticate_api_key
+from app.services.rate_limiting import consume_token, find_policy
 from app.services.routing import select_route
 
 router = APIRouter(tags=["gateway"])
@@ -73,13 +75,29 @@ async def _forward(request: Request, route: Route, request_path: str) -> Respons
             timeout=route.timeout_seconds,
         )
     except httpx.TimeoutException:
-        return _gateway_error(504, "upstream_timeout", "The upstream service timed out")
+        return _gateway_error(
+            504,
+            "upstream_timeout",
+            "The upstream service timed out",
+            getattr(request.state, "rate_limit_headers", None),
+        )
     except httpx.ConnectError:
-        return _gateway_error(502, "upstream_unavailable", "The upstream service is unavailable")
+        return _gateway_error(
+            502,
+            "upstream_unavailable",
+            "The upstream service is unavailable",
+            getattr(request.state, "rate_limit_headers", None),
+        )
     except httpx.RequestError:
-        return _gateway_error(502, "upstream_error", "The request to the upstream service failed")
+        return _gateway_error(
+            502,
+            "upstream_error",
+            "The request to the upstream service failed",
+            getattr(request.state, "rate_limit_headers", None),
+        )
 
     response_headers = {name: value for name, value in upstream.headers.items() if name.lower() in SAFE_RESPONSE_HEADERS}
+    response_headers.update(getattr(request.state, "rate_limit_headers", {}))
     return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
 
 
@@ -98,5 +116,31 @@ async def gateway_request(
     if route is None:
         return _gateway_error(404, "route_not_found", "No configured route matches this request")
     if request.method not in route.methods:
-        return _gateway_error(405, "method_not_allowed", "This method is not enabled for the configured route", {"Allow": ", ".join(route.methods)})
+        return _gateway_error(
+            405,
+            "method_not_allowed",
+            "This method is not enabled for the configured route",
+            {"Allow": ", ".join(route.methods)},
+        )
+
+    policy = await find_policy(session, client_id, route.id)
+    if policy is not None:
+        try:
+            decision = await consume_token(policy, client_id, route.id)
+        except RedisError:
+            return _gateway_error(503, "rate_limiter_unavailable", "The rate limiter is temporarily unavailable")
+        rate_headers = {
+            "X-RateLimit-Limit": str(decision.limit),
+            "X-RateLimit-Remaining": str(decision.remaining),
+        }
+        if not decision.allowed:
+            rate_headers["Retry-After"] = str(max(1, decision.retry_after))
+            return _gateway_error(
+                429,
+                "rate_limit_exceeded",
+                "The request quota has been exceeded",
+                rate_headers,
+            )
+        request.state.rate_limit = decision
+        request.state.rate_limit_headers = rate_headers
     return await _forward(request, route, incoming_path)

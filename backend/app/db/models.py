@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid, func, literal_column, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -53,6 +53,24 @@ class RateLimitPolicy(Base):
     __table_args__ = (
         Index("ix_rate_limit_policies_client_id", "client_id"),
         Index("ix_rate_limit_policies_enabled", "enabled"),
+        CheckConstraint("capacity > 0", name="ck_rate_limit_policies_capacity_positive"),
+        CheckConstraint("refill_rate > 0", name="ck_rate_limit_policies_refill_positive"),
+        Index(
+            "uq_rate_limit_policy_global_scope", literal_column("(1)"), unique=True,
+            postgresql_where=text("client_id IS NULL AND route_id IS NULL"),
+        ),
+        Index(
+            "uq_rate_limit_policy_client_scope", "client_id", unique=True,
+            postgresql_where=text("client_id IS NOT NULL AND route_id IS NULL"),
+        ),
+        Index(
+            "uq_rate_limit_policy_route_scope", "route_id", unique=True,
+            postgresql_where=text("client_id IS NULL AND route_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_rate_limit_policy_client_route_scope", "client_id", "route_id", unique=True,
+            postgresql_where=text("client_id IS NOT NULL AND route_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
