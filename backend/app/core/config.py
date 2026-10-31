@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_socket_timeout_seconds: float = 1.0
     redis_connect_timeout_seconds: float = 1.0
+    frontend_origin: str = "http://localhost:3000"
     admin_token: str = "change-me-admin-token"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

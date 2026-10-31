@@ -12,6 +12,7 @@ from app.db.models import Route
 from app.services.auth import authenticate_api_key
 from app.services.rate_limiting import consume_token, find_policy
 from app.services.routing import select_route
+from app.observability.metrics import RATE_LIMIT_REJECTIONS, UPSTREAM_ERRORS
 
 router = APIRouter(tags=["gateway"])
 SUPPORTED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
@@ -75,6 +76,7 @@ async def _forward(request: Request, route: Route, request_path: str) -> Respons
             timeout=route.timeout_seconds,
         )
     except httpx.TimeoutException:
+        UPSTREAM_ERRORS.labels("timeout").inc()
         return _gateway_error(
             504,
             "upstream_timeout",
@@ -82,6 +84,7 @@ async def _forward(request: Request, route: Route, request_path: str) -> Respons
             getattr(request.state, "rate_limit_headers", None),
         )
     except httpx.ConnectError:
+        UPSTREAM_ERRORS.labels("connect").inc()
         return _gateway_error(
             502,
             "upstream_unavailable",
@@ -89,6 +92,7 @@ async def _forward(request: Request, route: Route, request_path: str) -> Respons
             getattr(request.state, "rate_limit_headers", None),
         )
     except httpx.RequestError:
+        UPSTREAM_ERRORS.labels("request").inc()
         return _gateway_error(
             502,
             "upstream_error",
@@ -98,6 +102,8 @@ async def _forward(request: Request, route: Route, request_path: str) -> Respons
 
     response_headers = {name: value for name, value in upstream.headers.items() if name.lower() in SAFE_RESPONSE_HEADERS}
     response_headers.update(getattr(request.state, "rate_limit_headers", {}))
+    if upstream.status_code >= 500:
+        UPSTREAM_ERRORS.labels("http_5xx").inc()
     return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
 
 
@@ -134,6 +140,7 @@ async def gateway_request(
             "X-RateLimit-Remaining": str(decision.remaining),
         }
         if not decision.allowed:
+            RATE_LIMIT_REJECTIONS.inc()
             rate_headers["Retry-After"] = str(max(1, decision.retry_after))
             return _gateway_error(
                 429,
