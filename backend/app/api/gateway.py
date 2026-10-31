@@ -1,3 +1,4 @@
+import uuid
 from urllib.parse import quote, unquote
 
 import httpx
@@ -19,6 +20,8 @@ SUPPORTED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 SAFE_REQUEST_HEADERS = {
     "accept",
     "accept-language",
+    "content-encoding",
+    "content-language",
     "content-type",
     "if-match",
     "if-modified-since",
@@ -37,7 +40,11 @@ SAFE_RESPONSE_HEADERS = {
     "etag",
     "expires",
     "last-modified",
+    "location",
+    "retry-after",
     "vary",
+    "www-authenticate",
+    "allow",
 }
 
 
@@ -64,17 +71,44 @@ async def _forward(request: Request, route: Route, request_path: str) -> Respons
     if request.url.query:
         url = f"{url}?{request.url.query}"
 
+    maximum_body_bytes = request.app.state.settings.max_gateway_body_bytes
+    declared_length = request.headers.get("content-length")
+    if declared_length and declared_length.isdecimal() and int(declared_length) > maximum_body_bytes:
+        return _gateway_error(413, "request_too_large", "The request body exceeds the configured limit")
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > maximum_body_bytes:
+            return _gateway_error(413, "request_too_large", "The request body exceeds the configured limit")
+        body.extend(chunk)
+
     outgoing_headers = {name: value for name, value in request.headers.items() if name.lower() in SAFE_REQUEST_HEADERS}
-    body = await request.body()
     client: httpx.AsyncClient = request.app.state.http_client
+    upstream: httpx.Response | None = None
     try:
-        upstream = await client.request(
+        upstream_request = client.build_request(
             method=request.method,
             url=url,
             headers=outgoing_headers,
-            content=body if body else None,
+            content=bytes(body) if body else None,
             timeout=route.timeout_seconds,
         )
+        upstream = await client.send(upstream_request, stream=True)
+        response_body = bytearray()
+        async for chunk in upstream.aiter_bytes():
+            if len(response_body) + len(chunk) > maximum_body_bytes:
+                return _gateway_error(
+                    502,
+                    "upstream_response_too_large",
+                    "The upstream response exceeds the configured limit",
+                )
+            response_body.extend(chunk)
+
+        response_headers = {name: value for name, value in upstream.headers.items() if name.lower() in SAFE_RESPONSE_HEADERS}
+        response_headers.update(getattr(request.state, "rate_limit_headers", {}))
+        if upstream.status_code >= 500:
+            UPSTREAM_ERRORS.labels("http_5xx").inc()
+        return Response(content=bytes(response_body), status_code=upstream.status_code, headers=response_headers)
     except httpx.TimeoutException:
         UPSTREAM_ERRORS.labels("timeout").inc()
         return _gateway_error(
@@ -99,23 +133,19 @@ async def _forward(request: Request, route: Route, request_path: str) -> Respons
             "The request to the upstream service failed",
             getattr(request.state, "rate_limit_headers", None),
         )
-
-    response_headers = {name: value for name, value in upstream.headers.items() if name.lower() in SAFE_RESPONSE_HEADERS}
-    response_headers.update(getattr(request.state, "rate_limit_headers", {}))
-    if upstream.status_code >= 500:
-        UPSTREAM_ERRORS.labels("http_5xx").inc()
-    return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
+    finally:
+        if upstream is not None:
+            await upstream.aclose()
 
 
 @router.api_route("/{request_path:path}", methods=SUPPORTED_METHODS)
 async def gateway_request(
     request_path: str,
     request: Request,
-    client_id=Depends(authenticate_api_key),
+    client_id: uuid.UUID = Depends(authenticate_api_key),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     # Authentication is performed before route lookup to avoid exposing route configuration.
-    request.state.client_id = client_id
     incoming_path = f"/{request_path}" if request_path else "/"
     routes = list((await session.scalars(select(Route).where(Route.enabled.is_(True)))).all())
     route = select_route(routes, incoming_path)
@@ -148,6 +178,5 @@ async def gateway_request(
                 "The request quota has been exceeded",
                 rate_headers,
             )
-        request.state.rate_limit = decision
         request.state.rate_limit_headers = rate_headers
     return await _forward(request, route, incoming_path)

@@ -10,6 +10,8 @@ COPY app ./app
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
 COPY pytest.ini ./pytest.ini
+COPY mypy.ini ./mypy.ini
+COPY ruff.toml ./ruff.toml
 COPY tests ./tests
 
 CMD ["pytest", "-q"]

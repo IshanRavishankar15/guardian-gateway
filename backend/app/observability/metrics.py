@@ -53,9 +53,14 @@ def record_request(area: str, method: str, status_code: int, duration_seconds: f
 
 def dashboard_summary() -> dict[str, int | float]:
     """Return aggregate values from the same process-local metrics exposed at /metrics."""
-    requests = sum(sample.value for sample in HTTP_REQUESTS.collect()[0].samples if sample.name.endswith("_total"))
-    rejection_count = RATE_LIMIT_REJECTIONS.collect()[0].samples[0].value
-    upstream_samples = UPSTREAM_ERRORS.collect()[0].samples
+    request_metric = next(iter(HTTP_REQUESTS.collect()))
+    rejection_metric = next(iter(RATE_LIMIT_REJECTIONS.collect()))
+    upstream_metric = next(iter(UPSTREAM_ERRORS.collect()))
+    duration_metric = next(iter(HTTP_REQUEST_DURATION.collect()))
+
+    requests = sum(sample.value for sample in request_metric.samples if sample.name.endswith("_total"))
+    rejection_count = rejection_metric.samples[0].value
+    upstream_samples = upstream_metric.samples
     upstream_error_count = sum(sample.value for sample in upstream_samples if sample.name.endswith("_total"))
     timeout_count = sum(
         sample.value
@@ -63,7 +68,7 @@ def dashboard_summary() -> dict[str, int | float]:
         if sample.name.endswith("_total") and sample.labels.get("error_type") == "timeout"
     )
 
-    histogram_samples = HTTP_REQUEST_DURATION.collect()[0].samples
+    histogram_samples = duration_metric.samples
     duration_sum = sum(sample.value for sample in histogram_samples if sample.name.endswith("_sum"))
     duration_count = sum(sample.value for sample in histogram_samples if sample.name.endswith("_count"))
     average_latency = duration_sum / duration_count if duration_count else 0.0

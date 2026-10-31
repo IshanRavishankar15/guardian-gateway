@@ -9,11 +9,13 @@ API client --X-API-Key--> FastAPI gateway --> configured upstream
                                |  \
                                |   +--> Redis (atomic Lua token bucket)
                                +------> PostgreSQL (keys, routes, policies, audit)
+                                         ^
+                                         +-- one-shot Alembic migration service
 Admin browser --> Next.js dashboard --> protected admin API and process metrics
 Prometheus ---------------------------> /metrics
 ```
 
-The gateway authenticates a client before route lookup, selects the longest matching enabled path prefix, checks the most specific enabled policy, then forwards the request. PostgreSQL is the configuration source of truth. A single Redis Lua operation reads and refills the bucket, decides quota, deducts a token when allowed, writes the state, and sets its expiry. Every gateway process uses the same Redis bucket key. Redis errors fail closed with HTTP 503. Upstream timeouts return 504 and connection/request failures return 502. The gateway does not retry upstream requests.
+The gateway authenticates a client before route lookup, selects the longest matching enabled path prefix, checks the most specific enabled policy, then forwards the request. PostgreSQL is the configuration source of truth. A single Redis Lua operation reads and refills the bucket, decides quota, deducts a token when allowed, writes the state, and sets its expiry. Every gateway process uses the same Redis bucket key. Redis errors fail closed with HTTP 503. Upstream timeouts return 504 and connection/request failures return 502. The gateway does not retry upstream requests. Request and response bodies are capped by `MAX_GATEWAY_BODY_BYTES` to bound memory use; oversized requests receive 413 and oversized upstream responses receive 502.
 
 The dashboard reads route and policy configuration from the admin API and traffic aggregates from the running backend process. Prometheus labels use bounded route-area, method, and status-class values; raw paths and credentials are not labels.
 
@@ -37,9 +39,9 @@ Services are available at:
 | Prometheus metrics | http://localhost:8000/metrics |
 | Mock upstream | http://localhost:9000 |
 
-PostgreSQL and Redis are also exposed on their standard local ports. A one-shot `migrate` service applies Alembic migrations once after PostgreSQL is healthy; gateway containers wait for it to complete before starting. Readiness checks both PostgreSQL and Redis at `/health/ready`; `/health/live` checks only that the application process responds.
+PostgreSQL, Redis, backend, frontend, and mock upstream ports bind to loopback only. A one-shot `migrate` service applies Alembic migrations once after PostgreSQL is healthy; gateway containers wait for it to complete before starting, avoiding competing migration attempts. Readiness checks both PostgreSQL and Redis at `/health/ready`; `/health/live` checks only that the application process responds.
 
-`.env.example` contains development-only credentials. Replace the admin token and database password before exposing any service beyond a trusted local machine. Do not commit `.env`. This MVP does not provide production-grade admin identity management, TLS termination, secret rotation, network policy, or a multi-process metrics aggregator. Restrict `/metrics` to a trusted monitoring network in any shared deployment.
+`.env.example` contains development-only credentials. Replace the admin token and database password before exposing any service beyond a trusted local machine. Do not commit `.env`. `APP_ENV=production` or `staging` rejects the default admin token at startup. That guard does not make this a production-hardened deployment: this MVP has no production identity provider or role model, TLS termination, secret rotation, network policy, or multi-process metrics aggregator. Restrict `/metrics` to a trusted monitoring network in any shared deployment.
 
 ## Configure and demonstrate
 
@@ -88,17 +90,23 @@ All `/admin` endpoints require `X-Admin-Token`. Gateway calls require `X-API-Key
 
 | Variable | Purpose | Development default |
 | --- | --- | --- |
+| `APP_ENV` | Runtime environment; production/staging requires a changed admin token | `development` |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Compose PostgreSQL initialization | `guardian_gateway`, `guardian`, `change-me-locally` |
 | `DATABASE_URL` | Async SQLAlchemy connection | Compose PostgreSQL URL |
 | `REDIS_URL` | Shared limiter state | `redis://redis:6379/0` |
 | `REDIS_SOCKET_TIMEOUT_SECONDS`, `REDIS_CONNECT_TIMEOUT_SECONDS` | Redis call timeouts | `1.0` |
 | `ADMIN_TOKEN` | Admin API/dashboard credential | `change-me-admin-token` |
 | `ALLOWED_UPSTREAM_HOSTS` | Comma-separated exact host allowlist for configured destinations | `mock-upstream,localhost,127.0.0.1` |
+| `MAX_GATEWAY_BODY_BYTES` | Maximum accepted request and upstream response body size (1 byte–100 MiB) | `10485760` (10 MiB) |
 | `FRONTEND_ORIGIN` | Allowed dashboard CORS origin | `http://localhost:3000` |
 | `BACKEND_PORT`, `FRONTEND_PORT` | Local published ports | `8000`, `3000` |
 | `NEXT_PUBLIC_API_BASE_URL` | Browser-to-API base URL | `http://localhost:8000` |
 
 To stop services while retaining local database and Redis data, run `docker compose down`. To delete that data as well, run `docker compose down -v`.
+
+## Development workflow
+
+The default Compose profile is the local development stack. After changing backend or frontend dependencies/code, rebuild and restart with `docker compose up --build -d`. Run backend linting, typing, and tests using the commands below. The test profile uses the same local PostgreSQL/Redis services and creates a second gateway container; it cleans up test records but should still only be pointed at disposable development data. Run `docker compose down` when finished; this retains named database volumes.
 
 ## Tests and load check
 
@@ -124,7 +132,17 @@ Build-check the dashboard:
 docker compose run --build --rm --no-deps frontend npm run build
 ```
 
-GitHub Actions runs the backend integration suite, dashboard build, and Compose configuration validation on pushes and pull requests.
+GitHub Actions runs dependency audit, backend integration tests, backend Ruff and mypy checks, dashboard strict TypeScript checking, dashboard production build, and Compose configuration validation on pushes and pull requests. The backend static checks can be run locally with:
+
+```powershell
+docker compose --profile test run --build --rm --no-deps test-runner sh -c "ruff check app tests && mypy app"
+```
+
+The dashboard's strict TypeScript check runs during `npm run build`; run it on demand with `npm ci` and `npm run typecheck` from `frontend`.
+
+## Deployment scope
+
+The supported deployment for this repository is local Docker Compose development and demonstration. It is not ready to expose directly to the public internet. For a controlled deployment experiment, use `APP_ENV=production`, a unique high-entropy `ADMIN_TOKEN`, production-grade `DATABASE_URL` and `REDIS_URL`, a minimal `ALLOWED_UPSTREAM_HOSTS` list, and a deliberate body limit; then put TLS and authentication in a trusted reverse proxy and restrict network access to the database, Redis, and `/metrics`. The Compose file is not a production orchestration or secrets-management solution: it uses local development credentials by default, publishes services for local use, and does not configure TLS, Redis/PostgreSQL authentication policy beyond local defaults, backups, high availability, or aggregated metrics. Treat these as deployment requirements, not features already implemented.
 
 ## Data and implementation notes
 

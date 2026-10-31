@@ -23,6 +23,11 @@ jobs:
         run: npm ci && npm audit --audit-level=moderate
       - name: Run backend integration and multi-process tests
         run: docker compose --profile test run --build --rm test-runner
+      - name: Lint and type-check the backend
+        run: docker compose --profile test run --build --rm --no-deps test-runner sh -c "ruff check app tests && mypy app"
+      - name: Type-check the dashboard
+        working-directory: frontend
+        run: npm run typecheck
       - name: Build the dashboard
         run: docker compose run --build --rm --no-deps frontend npm run build
       - name: Validate Compose configuration

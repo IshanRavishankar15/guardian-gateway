@@ -80,6 +80,7 @@ async def test_admin_authorization_and_upstream_validation(gateway):
     )
     assert no_token.status_code == 401
     assert bad_token.status_code == 401
+    assert no_token.json()["error"]["code"] == "unauthorized"
     invalid_route = await gateway.first.post(
         "/admin/routes",
         headers=gateway.admin_headers,
@@ -91,6 +92,7 @@ async def test_admin_authorization_and_upstream_validation(gateway):
         },
     )
     assert invalid_route.status_code == 422
+    assert invalid_route.json()["error"]["code"] == "validation_error"
     unapproved_host = await gateway.first.post(
         "/admin/routes",
         headers=gateway.admin_headers,
@@ -134,12 +136,55 @@ async def test_forwarding_preserves_supported_request_data_and_filters_headers(g
 
 
 @pytest.mark.asyncio
+async def test_gateway_body_limits_and_redirect_headers(gateway, monkeypatch):
+    monkeypatch.setattr(gateway.settings, "max_gateway_body_bytes", 16)
+    request_too_large = await gateway.first.post(
+        f"{gateway.route_prefix}/echo",
+        headers={"X-API-Key": gateway.api_key},
+        content=b"x" * 17,
+    )
+    assert request_too_large.status_code == 413
+    assert request_too_large.json()["error"]["code"] == "request_too_large"
+
+    response_too_large = await gateway.first.get(
+        f"{gateway.route_prefix}/large/17", headers={"X-API-Key": gateway.api_key}
+    )
+    assert response_too_large.status_code == 502
+    assert response_too_large.json()["error"]["code"] == "upstream_response_too_large"
+
+    redirect = await gateway.first.get(
+        f"{gateway.route_prefix}/redirect", headers={"X-API-Key": gateway.api_key}
+    )
+    assert redirect.status_code == 302
+    assert redirect.headers["location"] == "/target"
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_allows_all_supported_gateway_methods(gateway):
+    response = await gateway.first.options(
+        f"{gateway.route_prefix}/echo",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "PUT",
+            "Access-Control-Request-Headers": "x-api-key",
+        },
+    )
+    assert response.status_code == 200
+    assert "PUT" in response.headers["access-control-allow-methods"]
+
+
+@pytest.mark.asyncio
 async def test_upstream_status_method_timeout_and_connection_errors(gateway):
     status_response = await gateway.first.get(
         f"{gateway.route_prefix}/status/503", headers={"X-API-Key": gateway.api_key}
     )
     assert status_response.status_code == 503
     assert status_response.json()["upstream_status"] == 503
+    no_content_response = await gateway.first.get(
+        f"{gateway.route_prefix}/status/204", headers={"X-API-Key": gateway.api_key}
+    )
+    assert no_content_response.status_code == 204
+    assert not no_content_response.content
 
     method_update = await gateway.first.patch(
         f"/admin/routes/{gateway.route_id}",

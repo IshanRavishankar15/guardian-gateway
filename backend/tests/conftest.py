@@ -8,7 +8,7 @@ import pytest_asyncio
 from sqlalchemy import delete
 from uuid import UUID
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.dependencies import SessionFactory, redis_client
 from app.db.models import AuditLog, Client, RateLimitPolicy, Route
 from app.main import create_app
@@ -34,7 +34,7 @@ async def gateway_clients():
                 base_url="http://gateway-two.test",
             )
         )
-        yield first_client, second_client
+        yield first_client, second_client, first_app.state.settings
 
 
 @dataclass
@@ -46,6 +46,7 @@ class GatewayFixture:
     route_id: str
     route_prefix: str
     api_key: str
+    settings: Settings
     resource_ids: list[str] = field(default_factory=list)
     policy_ids: list[str] = field(default_factory=list)
     key_ids: list[str] = field(default_factory=list)
@@ -53,7 +54,7 @@ class GatewayFixture:
 
 @pytest_asyncio.fixture
 async def gateway(gateway_clients) -> GatewayFixture:
-    first, second = gateway_clients
+    first, second, settings = gateway_clients
     admin_headers = {"X-Admin-Token": get_settings().admin_token}
     marker = uuid.uuid4().hex
     client_response = await first.post(
@@ -96,6 +97,7 @@ async def gateway(gateway_clients) -> GatewayFixture:
         route_id=route_data["id"],
         route_prefix=route_prefix,
         api_key=key_data["api_key"],
+        settings=settings,
         resource_ids=[client_id, key_data["id"], route_data["id"]],
         key_ids=[key_data["id"]],
     )
