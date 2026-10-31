@@ -12,6 +12,15 @@ class Settings(BaseSettings):
     redis_connect_timeout_seconds: float = 1.0
     frontend_origin: str = "http://localhost:3000"
     admin_token: str = "change-me-admin-token"
+    allowed_upstream_hosts: str = "mock-upstream,localhost,127.0.0.1"
+
+    @property
+    def upstream_host_allowlist(self) -> set[str]:
+        return {
+            hostname.strip().rstrip(".").lower()
+            for hostname in self.allowed_upstream_hosts.split(",")
+            if hostname.strip()
+        }
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

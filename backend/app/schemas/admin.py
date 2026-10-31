@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.config import get_settings
+
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -63,6 +65,8 @@ class RouteCreate(BaseModel):
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("upstream_base_url must be an HTTP(S) URL without embedded credentials")
+        if parsed.hostname.rstrip(".").lower() not in get_settings().upstream_host_allowlist:
+            raise ValueError("upstream host is not in ALLOWED_UPSTREAM_HOSTS")
         try:
             parsed.port
         except ValueError as exc:
@@ -97,6 +101,8 @@ class RouteUpdate(BaseModel):
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("upstream_base_url must be an HTTP(S) URL without credentials, query, or fragment")
+        if parsed.hostname.rstrip(".").lower() not in get_settings().upstream_host_allowlist:
+            raise ValueError("upstream host is not in ALLOWED_UPSTREAM_HOSTS")
         try:
             parsed.port
         except ValueError as exc:

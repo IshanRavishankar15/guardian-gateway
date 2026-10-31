@@ -91,6 +91,17 @@ async def test_admin_authorization_and_upstream_validation(gateway):
         },
     )
     assert invalid_route.status_code == 422
+    unapproved_host = await gateway.first.post(
+        "/admin/routes",
+        headers=gateway.admin_headers,
+        json={
+            "name": "pytest-unapproved-host",
+            "path_prefix": "/pytest-unapproved-host",
+            "upstream_base_url": "http://169.254.169.254/latest/meta-data",
+            "methods": ["GET"],
+        },
+    )
+    assert unapproved_host.status_code == 422
 
 
 @pytest.mark.asyncio

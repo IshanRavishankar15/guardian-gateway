@@ -43,6 +43,7 @@ services:
       REDIS_CONNECT_TIMEOUT_SECONDS: ${REDIS_CONNECT_TIMEOUT_SECONDS:-1.0}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me-admin-token}
+      ALLOWED_UPSTREAM_HOSTS: ${ALLOWED_UPSTREAM_HOSTS:-mock-upstream,localhost,127.0.0.1}
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -82,7 +83,10 @@ services:
       REDIS_CONNECT_TIMEOUT_SECONDS: ${REDIS_CONNECT_TIMEOUT_SECONDS:-1.0}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me-admin-token}
+      ALLOWED_UPSTREAM_HOSTS: ${ALLOWED_UPSTREAM_HOSTS:-mock-upstream,localhost,127.0.0.1}
       MOCK_UPSTREAM_URL: http://mock-upstream:9000
+      GATEWAY_PRIMARY_URL: http://backend:8000
+      GATEWAY_REPLICA_URL: http://backend-replica:8000
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +96,34 @@ services:
         condition: service_started
       backend:
         condition: service_healthy
+      backend-replica:
+        condition: service_healthy
+
+  backend-replica:
+    profiles: ["test"]
+    build: ./backend
+    environment:
+      APP_ENV: test
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://guardian:change-me-locally@postgres:5432/guardian_gateway}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-1.0}
+      REDIS_CONNECT_TIMEOUT_SECONDS: ${REDIS_CONNECT_TIMEOUT_SECONDS:-1.0}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me-admin-token}
+      ALLOWED_UPSTREAM_HOSTS: ${ALLOWED_UPSTREAM_HOSTS:-mock-upstream,localhost,127.0.0.1}
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mock-upstream:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   postgres_data:
